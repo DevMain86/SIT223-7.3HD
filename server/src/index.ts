@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import sgMail from "@sendgrid/mail";
-import bcrypt from "bcrypt";
+import bcrypt from "bcryptjs";
 import { db } from "./firebaseAdmin.js";
 import jwt from "jsonwebtoken";
 import { requireAuth, optionalAuth } from "./middleware/auth.js";
