@@ -51,6 +51,8 @@ function decodeServiceAccount(encoded: string): ServiceAccount {
 
 export const config = {
   port: Number(process.env.PORT ?? 3000),
+  // Optional: stamped in by the pipeline at build time; "dev" when running locally
+  appVersion: process.env.APP_VERSION ?? "dev",
   jwtSecret: env("JWT_SECRET"),
   sendgridApiKey: env("SENDGRID_API_KEY"),
   senderEmail: env("SENDER_EMAIL"),

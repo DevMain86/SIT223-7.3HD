@@ -9,6 +9,7 @@ import jwt from "jsonwebtoken";
 import { Timestamp } from "firebase-admin/firestore";
 import { config } from "./config.js";
 import { db } from "./firebaseAdmin.js";
+import { metricsMiddleware, register } from "./metrics.js";
 import { requireAuth, optionalAuth } from "./middleware/auth.js";
 import { validatePost, normaliseTags } from "./validation/postValidation.js";
 
@@ -18,12 +19,30 @@ const app = express();
 sgMail.setApiKey(config.sendgridApiKey);
 
 // Core middleware
+app.use(metricsMiddleware);   // first, so it times everything after it
 app.use(cors());          // allow frontend requests
 app.use(express.json());  // parse JSON bodies
 
 // Basic server check
 app.get("/", (_req, res) => {
   res.send("DEV@Deakin backend is running.");
+});
+
+// Liveness check for Docker HEALTHCHECK and pipeline smoke tests.
+// Reports the running version so a deploy can confirm which build is live.
+app.get("/health", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    version: config.appVersion,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Prometheus scrape endpoint
+app.get("/metrics", async (_req, res) => {
+  res.set("Content-Type", register.contentType);
+  res.send(await register.metrics());
 });
 
 // Email subscription: validate + send welcome email
