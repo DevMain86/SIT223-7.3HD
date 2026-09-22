@@ -1,3 +1,4 @@
+import { apiUrl } from "../utils/api";
 import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "../context/AuthContext";
 import type { Post } from "../types/post";
@@ -35,7 +36,7 @@ function Browse() {
       setError("");
 
       try {
-        const response = await fetch("http://localhost:3000/posts", {
+        const response = await fetch(apiUrl("/posts"), {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
 

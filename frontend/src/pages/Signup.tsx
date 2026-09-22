@@ -1,3 +1,4 @@
+import { apiUrl } from "../utils/api";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -22,7 +23,7 @@ function Signup() {
 
     try {
       // Send registration request to backend
-      const response = await fetch("http://localhost:3000/register", {
+      const response = await fetch(apiUrl("/register"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, password }),

@@ -1,3 +1,4 @@
+import { apiUrl } from "../utils/api";
 import { useState } from "react";
 import { toast } from "react-toastify";
 import { useAuth } from "../context/AuthContext";
@@ -36,7 +37,7 @@ function UpgradeModal({ onClose, onSuccess }: UpgradeModalProps) {
 
     try {
       // Protected upgrade request using the user's JWT
-      const response = await fetch("http://localhost:3000/upgrade", {
+      const response = await fetch(apiUrl("/upgrade"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

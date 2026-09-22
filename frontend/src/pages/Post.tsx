@@ -1,3 +1,4 @@
+import { apiUrl } from "../utils/api";
 import { useState } from "react";
 import { toast } from "react-toastify";
 import { useAuth } from "../context/AuthContext";
@@ -76,7 +77,7 @@ function Post() {
         : { type: "article", plan, title, tags, abstract, articleText };
 
     try {
-      const response = await fetch("http://localhost:3000/posts", {
+      const response = await fetch(apiUrl("/posts"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
