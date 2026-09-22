@@ -17,6 +17,9 @@ function BrowsePostCard({ post, isExpanded, onToggle, onHide }: BrowsePostCardPr
 
   // Keyboard accessibility: Enter + Space toggle expansion
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+
+    if (e.target !== e.currentTarget) return;
+
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onToggle();
