@@ -1,0 +1,14 @@
+# Keep secrets, dependencies and generated output out of the build context
+node_modules
+dist
+coverage
+test-results
+tests
+.scannerwork
+*.log
+
+# Secrets must never be copied into an image; they are injected at runtime
+.env
+.env.*
+!.env.example
+serviceAccountKey.json

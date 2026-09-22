@@ -1,0 +1,30 @@
+name: devdeakin
+
+services:
+  server:
+    build:
+      context: ./server
+      args:
+        APP_VERSION: ${APP_VERSION:-dev}
+    image: devdeakin-server:${APP_VERSION:-dev}
+    environment:
+      # Compose refuses to start if any of these are missing, mirroring config.ts
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY:?SENDGRID_API_KEY is not set}
+      SENDER_EMAIL: ${SENDER_EMAIL:?SENDER_EMAIL is not set}
+      FIREBASE_SERVICE_ACCOUNT_BASE64: ${FIREBASE_SERVICE_ACCOUNT_BASE64:?FIREBASE_SERVICE_ACCOUNT_BASE64 is not set}
+    # Not published to the host: only nginx (and later Prometheus) can reach it
+    expose:
+      - "3000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    image: devdeakin-frontend:${APP_VERSION:-dev}
+    ports:
+      - "${FRONTEND_PORT:-8000}:8080"
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
