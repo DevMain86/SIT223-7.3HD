@@ -4,3 +4,4 @@ dist/
 **/serviceAccountKey.json
 .scannerwork/
 coverage/
+test-results/
