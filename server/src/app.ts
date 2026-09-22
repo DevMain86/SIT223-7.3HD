@@ -1,14 +1,13 @@
 // Express application: middleware and routes.
 // Exported without calling listen() so tests can drive it directly via Supertest.
 
-import "dotenv/config"; 
-
 import express from "express";
 import cors from "cors";
 import sgMail from "@sendgrid/mail";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { Timestamp } from "firebase-admin/firestore";
+import { config } from "./config.js";
 import { db } from "./firebaseAdmin.js";
 import { requireAuth, optionalAuth } from "./middleware/auth.js";
 import { validatePost, normaliseTags } from "./validation/postValidation.js";
@@ -16,7 +15,7 @@ import { validatePost, normaliseTags } from "./validation/postValidation.js";
 const app = express();
 
 // Load SendGrid key from environment
-sgMail.setApiKey(process.env.SENDGRID_API_KEY || "");
+sgMail.setApiKey(config.sendgridApiKey);
 
 // Core middleware
 app.use(cors());          // allow frontend requests
@@ -39,7 +38,7 @@ app.post("/subscribe", async (req, res) => {
 
   const msg = {
     to: email,
-    from: process.env.SENDER_EMAIL || "",
+    from: config.senderEmail,
     subject: "Welcome to DEV@Deakin!",
     text: "Thanks for subscribing to DEV@Deakin. Glad to have you on board!",
     html: "<strong>Thanks for subscribing to DEV@Deakin.</strong><p>Glad to have you on board!</p>",
@@ -125,7 +124,7 @@ app.post("/login", async (req, res) => {
     // Create session token
     const token = jwt.sign(
       { userId: userDoc.id, email: user.email },
-      process.env.JWT_SECRET || "",
+      config.jwtSecret,
       { expiresIn: "1h" }
     );
 

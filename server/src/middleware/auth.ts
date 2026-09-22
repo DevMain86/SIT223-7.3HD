@@ -1,6 +1,7 @@
 // Auth middleware: strict (requires login) and relaxed (optional login)
 import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import { config } from "../config.js";
 
 // Reads "Authorization: Bearer <token>" and returns the token.
 // Returns null when missing or malformed.
@@ -23,7 +24,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "") as {
+    const decoded = jwt.verify(token, config.jwtSecret) as {
       userId: string;
       email: string;
     };
@@ -44,7 +45,7 @@ export function optionalAuth(req: Request, res: Response, next: NextFunction) {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "") as {
+    const decoded = jwt.verify(token, config.jwtSecret) as {
       userId: string;
       email: string;
     };

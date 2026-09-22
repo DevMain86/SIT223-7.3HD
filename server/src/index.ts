@@ -1,9 +1,9 @@
 // Entry point: starts the HTTP server.
+// Kept separate from app.ts so the app can be imported by tests without binding a port.
 
+import { config } from "./config.js";
 import app from "./app.js";
 
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+app.listen(config.port, () => {
+  console.log(`Server running on http://localhost:${config.port}`);
 });
