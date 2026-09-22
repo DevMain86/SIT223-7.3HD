@@ -1,6 +1,6 @@
 import { apiUrl } from "../utils/api";
 import { useEffect, useState, useMemo } from "react";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 import type { Post } from "../types/post";
 import BrowsePostCard from "../components/BrowsePostCards";
 
@@ -23,6 +23,8 @@ function Browse() {
   const [planFilter, setPlanFilter] = useState("all");
   const [tagFilter, setTagFilter] = useState("all");
   const [dateFilter, setDateFilter] = useState("all");
+
+  const [now] = useState(() => Date.now());
 
   // IDs of posts the user has hidden from view (client-side only)
   const [hiddenIds, setHiddenIds] = useState<string[]>([]);
@@ -75,13 +77,13 @@ function Browse() {
 
       if (dateFilter !== "all") {
         const days = dateFilter === "week" ? 7 : 30;
-        const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+        const cutoff = now - days * 24 * 60 * 60 * 1000;
         if (post.createdAt._seconds * 1000 < cutoff) return false;
       }
 
       return true;
     });
-  }, [posts, hiddenIds, typeFilter, planFilter, tagFilter, dateFilter]);
+  }, [posts, hiddenIds, typeFilter, planFilter, tagFilter, dateFilter, now]);
 
   // Loading
   if (loading) {

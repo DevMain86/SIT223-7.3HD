@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { FaSearch } from "react-icons/fa";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 
 function NavBar() {
   const { user, logout } = useAuth();

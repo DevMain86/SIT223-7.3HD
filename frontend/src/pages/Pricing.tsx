@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 import UpgradeModal from "../components/UpgradeModal";
 
 // Feature lists for each plan

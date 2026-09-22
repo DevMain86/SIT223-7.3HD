@@ -1,7 +1,7 @@
 import { apiUrl } from "../utils/api";
 import { useState } from "react";
 import { toast } from "react-toastify";
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 
 // Props: close handler + callback for successful upgrade
 interface UpgradeModalProps {

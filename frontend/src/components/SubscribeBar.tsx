@@ -32,7 +32,7 @@ function SubscribeBar() {
         // Show the reason the backend gave.
         toast.error(data.message);
       }
-    } catch (error) {
+    } catch {
       // fetch threw - the request never completed
       toast.error("Could not reach the server. Please try again later.");
     }
