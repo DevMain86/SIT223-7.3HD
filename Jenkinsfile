@@ -1,6 +1,6 @@
 // DEV@Deakin CI/CD pipeline.
 //
-// Stages 1-3 of 7: Build, Test and Code Quality.
+// Stages 1-4 of 7: Build, Test, Code Quality and Security.
 
 pipeline {
     agent any
@@ -9,7 +9,7 @@ pipeline {
         timestamps()
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        timeout(time: 30, unit: 'MINUTES')          
+        timeout(time: 30, unit: 'MINUTES')   
     }
 
     environment {
@@ -28,6 +28,8 @@ pipeline {
         MAX_MAINTAINABILITY_RATING = '1'    // measured A
         MAX_RELIABILITY_RATING     = '4'    // measured D - bugs to be addressed in the Security stage
         MAX_SECURITY_RATING        = '3'    // measured C - vulnerabilities to be addressed in the Security stage
+
+        SECURITY_GATE_ENFORCED = 'false'
     }
 
     stages {
@@ -218,6 +220,77 @@ pipeline {
                         node scripts/check-quality-thresholds.mjs
                     else
                         node scripts/check-quality-thresholds.mjs || echo "Thresholds not met (reporting only)"
+                    fi
+                '''
+            }
+        }
+        stage('Security') {
+            steps {
+                sh '''
+                    set -e
+                    rm -rf security-reports
+                    mkdir -p security-reports
+                    failed=0
+
+                    # Two ways to run Trivy. Image scans talk to the Docker daemon through
+                    # the socket; filesystem scans need this workspace, which arrives via
+                    # the Jenkins container's own volumes. A named cache volume keeps
+                    # Trivy's vulnerability database between builds.
+                    TRIVY_IMAGE="docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v trivy-cache:/root/.cache \
+                        aquasec/trivy:latest"
+                    TRIVY_FS="docker run --rm \
+                        --volumes-from $(hostname) \
+                        -w $WORKSPACE \
+                        -v trivy-cache:/root/.cache \
+                        aquasec/trivy:latest"
+
+                    echo "=== Dependency vulnerabilities: full audit (informational)"
+                    (cd server   && npm audit) || true
+                    (cd frontend && npm audit) || true
+
+                    echo
+                    echo "=== Dependency vulnerabilities: production dependencies only (gated)"
+                    # Dev dependencies never reach the shipped artefact, so only production
+                    # dependencies gate the build. The full audit above still reports them.
+                    (cd server   && npm audit --omit=dev --audit-level=high) || failed=1
+                    (cd frontend && npm audit --omit=dev --audit-level=high) || failed=1
+
+                    echo
+                    echo "=== Container image vulnerabilities (Trivy)"
+                    for image in devdeakin-server devdeakin-frontend; do
+                        echo "--- ${image}:${APP_VERSION}"
+                        $TRIVY_IMAGE image --scanners vuln --severity HIGH,CRITICAL \
+                            --no-progress "${image}:${APP_VERSION}"
+
+                        $TRIVY_IMAGE image --scanners vuln --format json --quiet \
+                            -o "/root/.cache/${image}-trivy.json" "${image}:${APP_VERSION}"
+
+                        # Gate only on vulnerabilities with a fix available: an unfixable
+                        # CVE in a base image cannot be actioned by this build
+                        $TRIVY_IMAGE image --scanners vuln --severity HIGH,CRITICAL \
+                            --ignore-unfixed --exit-code 1 --quiet --no-progress \
+                            "${image}:${APP_VERSION}" > /dev/null || failed=1
+                    done
+
+                    echo
+                    echo "=== Infrastructure misconfiguration (Dockerfiles and Compose)"
+                    $TRIVY_FS config --no-progress --severity HIGH,CRITICAL \
+                        --skip-dirs "**/node_modules" . || true
+
+                    echo
+                    echo "=== Committed secrets"
+                    $TRIVY_FS fs --scanners secret --no-progress \
+                        --skip-dirs "**/node_modules" --skip-dirs "**/dist" \
+                        --exit-code 1 . || failed=1
+
+                    if [ "$failed" -ne 0 ]; then
+                        if [ "$SECURITY_GATE_ENFORCED" = "true" ]; then
+                            echo "Security findings breach policy - failing the build"
+                            exit 1
+                        fi
+                        echo "Security findings present (reporting only - see SECURITY_GATE_ENFORCED)"
                     fi
                 '''
             }
