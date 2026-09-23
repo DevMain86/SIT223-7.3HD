@@ -9,7 +9,7 @@ pipeline {
         timestamps()
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')          
     }
 
     environment {
@@ -21,7 +21,13 @@ pipeline {
         FIREBASE_SERVICE_ACCOUNT_BASE64 = credentials('FIREBASE_SERVICE_ACCOUNT_BASE64')
         SONAR_TOKEN                     = credentials('SONAR_TOKEN')
 
-        SONAR_GATE_ENFORCED = 'false'
+        SONAR_GATE_ENFORCED = 'true'
+
+        MIN_COVERAGE               = '44'   // measured 44.5%
+        MAX_DUPLICATION            = '3'    // measured 0.0%
+        MAX_MAINTAINABILITY_RATING = '1'    // measured A
+        MAX_RELIABILITY_RATING     = '4'    // measured D - bugs to be addressed in the Security stage
+        MAX_SECURITY_RATING        = '3'    // measured C - vulnerabilities to be addressed in the Security stage
     }
 
     stages {
@@ -203,6 +209,15 @@ pipeline {
                             exit 1
                         fi
                         echo "Quality gate not met (reporting only - see SONAR_GATE_ENFORCED)"
+                    fi
+
+                    echo "=== Overall-code thresholds"
+                    SONAR_PROJECT_KEY=$(grep '^sonar.projectKey=' sonar-project.properties | cut -d= -f2-)
+                    export SONAR_PROJECT_KEY
+                    if [ "$SONAR_GATE_ENFORCED" = "true" ]; then
+                        node scripts/check-quality-thresholds.mjs
+                    else
+                        node scripts/check-quality-thresholds.mjs || echo "Thresholds not met (reporting only)"
                     fi
                 '''
             }
