@@ -1,20 +1,20 @@
 // DEV@Deakin CI/CD pipeline.
 //
-// Stage 1 of 7: Build. Installs dependencies, compiles both projects, builds container
-// images tagged with the build number, and archives the compiled output.
+// Stages 1-2 of 7: Build and Test.
 
 pipeline {
     agent any
 
     options {
-        timestamps()                                 
-        disableConcurrentBuilds()              
+        timestamps()                            
+        disableConcurrentBuilds()                    
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        timeout(time: 30, unit: 'MINUTES') 
+        timeout(time: 30, unit: 'MINUTES')       
     }
 
     environment {
         APP_VERSION = "${env.BUILD_NUMBER}"
+
         JWT_SECRET                      = credentials('JWT_SECRET')
         SENDGRID_API_KEY                = credentials('SENDGRID_API_KEY')
         SENDER_EMAIL                    = credentials('SENDER_EMAIL')
@@ -78,6 +78,37 @@ pipeline {
                 success {
                     archiveArtifacts artifacts: 'server/dist/**, frontend/dist/**',
                                      fingerprint: true
+                }
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh '''
+                    # Clear last build's reports so a crash can't republish stale results
+                    rm -rf server/test-results server/coverage
+                    rm -rf frontend/test-results frontend/coverage
+
+                    # Run both suites even if the first fails, so one build reports
+                    # everything that is broken, then fail the stage
+                    failed=0
+
+                    echo "=== Server tests (unit + integration, with coverage)"
+                    (cd server && npm run test:coverage) || failed=1
+
+                    echo "=== Frontend tests (unit + component, with coverage)"
+                    (cd frontend && npm run test:coverage) || failed=1
+
+                    if [ "$failed" -ne 0 ]; then
+                        echo "One or more test suites failed - failing the build"
+                        exit 1
+                    fi
+                '''
+            }
+            post {
+                always {
+                    junit testResults: 'server/test-results/junit.xml, frontend/test-results/junit.xml',
+                          allowEmptyResults: false
                 }
             }
         }
