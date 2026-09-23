@@ -6,10 +6,10 @@ pipeline {
     agent any
 
     options {
-        timestamps()                 
-        disableConcurrentBuilds()                   
+        timestamps()
+        disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        timeout(time: 30, unit: 'MINUTES')         
+        timeout(time: 30, unit: 'MINUTES')
     }
 
     environment {
@@ -130,20 +130,38 @@ pipeline {
                     # the Jenkins container's volumes, so the scanner sees this workspace:
                     # inside the container, hostname is its own container ID.
                     rm -rf .scannerwork gate.json
+                    mkdir -p .scannerwork
+
+                    # The scanner image runs as a non-root user and defaults its working
+                    # directory to /tmp inside the container, so report-task.txt (which
+                    # carries the analysis task ID) would be discarded with --rm. Running
+                    # as root and setting metadataFilePath writes it into the workspace.
                     docker run --rm \
+                        --user 0:0 \
                         --volumes-from "$(hostname)" \
                         -w "$WORKSPACE" \
                         -e SONAR_HOST_URL=https://sonarcloud.io \
                         -e SONAR_TOKEN="$SONAR_TOKEN" \
                         sonarsource/sonar-scanner-cli:latest \
-                        -Dsonar.projectVersion="$APP_VERSION"
+                        -Dsonar.projectVersion="$APP_VERSION" \
+                        -Dsonar.scanner.metadataFilePath="$WORKSPACE/.scannerwork/report-task.txt"
 
                     echo "=== Waiting for SonarCloud to finish processing"
                     # SonarCloud analyses server-side after upload. The usual
                     # waitForQualityGate step needs a webhook back into Jenkins, which a
                     # localhost instance cannot receive, so poll the API instead.
+                    if [ ! -f .scannerwork/report-task.txt ]; then
+                        echo "Scanner did not write report-task.txt - cannot verify the quality gate"
+                        exit 1
+                    fi
+
                     CE_URL=$(grep '^ceTaskUrl=' .scannerwork/report-task.txt | cut -d= -f2-)
                     DASHBOARD=$(grep '^dashboardUrl=' .scannerwork/report-task.txt | cut -d= -f2-)
+
+                    if [ -z "$CE_URL" ]; then
+                        echo "No ceTaskUrl in report-task.txt - cannot verify the quality gate"
+                        exit 1
+                    fi
 
                     ANALYSIS_ID=""
                     attempt=1
