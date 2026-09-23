@@ -29,7 +29,7 @@ pipeline {
         MAX_RELIABILITY_RATING     = '4'    // measured D - bugs to be addressed in the Security stage
         MAX_SECURITY_RATING        = '3'    // measured C - vulnerabilities to be addressed in the Security stage
 
-        SECURITY_GATE_ENFORCED = 'false'
+        SECURITY_GATE_ENFORCED = 'true'
     }
 
     stages {
