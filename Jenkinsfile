@@ -1,6 +1,6 @@
 // DEV@Deakin CI/CD pipeline.
 //
-// Stages 1-5 of 7: Build, Test, Code Quality, Security and Deploy.
+// Stages 1-6 of 7: Build, Test, Code Quality, Security, Deploy and Release.
 
 pipeline {
     agent any
@@ -9,7 +9,7 @@ pipeline {
         timestamps()
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES') 
     }
 
     environment {
@@ -33,6 +33,8 @@ pipeline {
 
         STAGING_PROJECT = 'devdeakin-staging'
         STAGING_PORT    = '8001'
+        PROD_PROJECT    = 'devdeakin-prod'
+        PROD_PORT       = '8000'
 
         DOCKER_HOST_NAME = 'host.docker.internal'
     }
@@ -93,7 +95,6 @@ pipeline {
             }
             post {
                 success {
-
                     archiveArtifacts artifacts: 'server/dist/**, frontend/dist/**',
                                      fingerprint: true
                 }
@@ -364,6 +365,106 @@ pipeline {
                     echo
                     echo "Staging deployment verified: ${BASE}"
                 '''
+            }
+        }
+
+        stage('Release') {
+            steps {
+                // The token is bound only for this stage: nothing earlier needs write
+                // access to GitHub
+                withCredentials([string(credentialsId: 'GITHUB_TOKEN', variable: 'GITHUB_TOKEN')]) {
+                    sh '''
+                        set -e
+                        rm -rf release
+                        mkdir -p release
+                        TAG="v${APP_VERSION}"
+                        COMMIT=$(git rev-parse HEAD)
+
+                        echo "=== Promoting the images verified in staging"
+                        # Retagging, not rebuilding: production runs the exact bytes that
+                        # passed every earlier stage
+                        for image in devdeakin-server devdeakin-frontend; do
+                            docker tag "${image}:${APP_VERSION}" "${image}:${TAG}"
+                            docker tag "${image}:${APP_VERSION}" "${image}:latest"
+                            echo "  ${image}: ${APP_VERSION} -> ${TAG}, latest"
+                        done
+
+                        echo
+                        echo "=== Changelog since the previous release"
+                        PREVIOUS=$(git tag --list 'v*' --sort=-v:refname | head -n 1)
+                        if [ -n "${PREVIOUS}" ]; then
+                            echo "  changes since ${PREVIOUS}:"
+                            git log --pretty=format:'- %h %s (%an)' "${PREVIOUS}..HEAD" > release/CHANGELOG.md
+                        else
+                            echo "  first release: most recent 20 commits"
+                            git log -20 --pretty=format:'- %h %s (%an)' > release/CHANGELOG.md
+                        fi
+                        cat release/CHANGELOG.md
+                        echo
+
+                        echo "=== Release manifest"
+                        # Records exactly what was released, so any running container can
+                        # be traced back to a build, a commit and an image digest
+                        SERVER_DIGEST=$(docker image inspect "devdeakin-server:${TAG}" --format '{{.Id}}')
+                        FRONTEND_DIGEST=$(docker image inspect "devdeakin-frontend:${TAG}" --format '{{.Id}}')
+                        cat > release/manifest.json <<MANIFEST
+{
+  "version": "${APP_VERSION}",
+  "tag": "${TAG}",
+  "commit": "${COMMIT}",
+  "released": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "images": {
+    "server": { "tag": "devdeakin-server:${TAG}", "id": "${SERVER_DIGEST}" },
+    "frontend": { "tag": "devdeakin-frontend:${TAG}", "id": "${FRONTEND_DIGEST}" }
+  },
+  "environments": {
+    "staging": "http://localhost:${STAGING_PORT}",
+    "production": "http://localhost:${PROD_PORT}"
+  }
+}
+MANIFEST
+                        cat release/manifest.json
+
+                        echo
+                        echo "=== Deploying ${TAG} to production on port ${PROD_PORT}"
+                        APP_VERSION="${APP_VERSION}" FRONTEND_PORT="${PROD_PORT}" \
+                            docker compose -p "${PROD_PROJECT}" up -d --no-build \
+                            --wait --wait-timeout 120
+                        docker compose -p "${PROD_PROJECT}" ps
+
+                        echo
+                        echo "=== Verifying production"
+                        PROD="http://${DOCKER_HOST_NAME}:${PROD_PORT}"
+                        curl -fsS "${PROD}/healthz"
+                        LIVE=$(curl -fsS "${PROD}/api/health" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).version))')
+                        if [ "${LIVE}" != "${APP_VERSION}" ]; then
+                            echo "Production reports ${LIVE}, expected ${APP_VERSION}"
+                            exit 1
+                        fi
+                        echo "production is running build ${LIVE}"
+
+                        echo
+                        echo "=== Tagging the release in Git"
+                        git config user.email "jenkins@devdeakin.local"
+                        git config user.name  "Jenkins"
+
+                        if git rev-parse "${TAG}" >/dev/null 2>&1; then
+                            echo "  ${TAG} already exists - leaving it untouched"
+                        else
+                            git tag -a "${TAG}" -m "Release ${TAG} from build ${APP_VERSION}"
+                            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/DevMain86/SIT223-7.3HD.git" "${TAG}"
+                            echo "  pushed ${TAG}"
+                        fi
+
+                        echo
+                        echo "Released ${TAG}: production on ${PROD}, staging on http://${DOCKER_HOST_NAME}:${STAGING_PORT}"
+                    '''
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'release/**', fingerprint: true
+                }
             }
         }
     }
