@@ -1,22 +1,28 @@
-
+// DEV@Deakin CI/CD pipeline.
+//
+// Stage 1 of 7: Build. Installs dependencies, compiles both projects, builds container
+// images tagged with the build number, and archives the compiled output.
 
 pipeline {
     agent any
 
     options {
-        timestamps()                                  
-        disableConcurrentBuilds()                    
+        timestamps()                                 
+        disableConcurrentBuilds()              
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        timeout(time: 30, unit: 'MINUTES')     
+        timeout(time: 30, unit: 'MINUTES') 
     }
 
     environment {
         APP_VERSION = "${env.BUILD_NUMBER}"
+        JWT_SECRET                      = credentials('JWT_SECRET')
+        SENDGRID_API_KEY                = credentials('SENDGRID_API_KEY')
+        SENDER_EMAIL                    = credentials('SENDER_EMAIL')
+        FIREBASE_SERVICE_ACCOUNT_BASE64 = credentials('FIREBASE_SERVICE_ACCOUNT_BASE64')
     }
 
     stages {
-
-        stage('Environment') {
+        stage('Preflight') {
             steps {
                 sh '''
                     set -e
@@ -26,50 +32,52 @@ pipeline {
                     echo "npm     : $(npm -v)"
                     echo "Docker  : $(docker version --format '{{.Client.Version}} client / {{.Server.Version}} daemon')"
                     echo "Compose : $(docker compose version --short)"
+
+                    # Confirms each secret is bound without printing its value
+                    check() {
+                        name=$1
+                        value=$2
+                        if [ -z "$value" ]; then
+                            echo "$name: MISSING"
+                            exit 1
+                        fi
+                        echo "$name: bound (${#value} characters)"
+                    }
+                    check JWT_SECRET "$JWT_SECRET"
+                    check SENDGRID_API_KEY "$SENDGRID_API_KEY"
+                    check SENDER_EMAIL "$SENDER_EMAIL"
+                    check FIREBASE_SERVICE_ACCOUNT_BASE64 "$FIREBASE_SERVICE_ACCOUNT_BASE64"
                 '''
             }
         }
 
-        stage('Workspace') {
+        stage('Build') {
             steps {
                 sh '''
                     set -e
-                    ls -1
-                    test -f docker-compose.yml
-                    test -f server/Dockerfile
-                    test -f frontend/Dockerfile
-                    test -f server/package.json
-                    test -f frontend/package.json
-                    echo "Repository checked out and project layout verified"
+
+                    echo "=== Installing dependencies (npm ci: exact lockfile versions)"
+                    (cd server   && npm ci)
+                    (cd frontend && npm ci)
+
+                    echo "=== Compiling the server (TypeScript to dist/)"
+                    (cd server   && npm run build)
+
+                    echo "=== Building the frontend bundle (type-check, then Vite build)"
+                    (cd frontend && npm run build)
+
+                    echo "=== Building container images tagged ${APP_VERSION}"
+                    docker compose build
+
+                    echo "=== Images produced by this build"
+                    docker image ls --filter "reference=devdeakin-*:${APP_VERSION}" \
+                        --format "  {{.Repository}}:{{.Tag}}  ({{.Size}})"
                 '''
             }
-        }
-
-        stage('Credentials') {
-            steps {
-                withCredentials([
-                    string(credentialsId: 'JWT_SECRET', variable: 'JWT_SECRET'),
-                    string(credentialsId: 'SENDGRID_API_KEY', variable: 'SENDGRID_API_KEY'),
-                    string(credentialsId: 'SENDER_EMAIL', variable: 'SENDER_EMAIL'),
-                    string(credentialsId: 'FIREBASE_SERVICE_ACCOUNT_BASE64', variable: 'FIREBASE_SERVICE_ACCOUNT_BASE64')
-                ]) {
-
-                    sh '''
-                        set -e
-                        check() {
-                            name=$1
-                            value=$2
-                            if [ -z "$value" ]; then
-                                echo "$name: MISSING"
-                                exit 1
-                            fi
-                            echo "$name: bound (${#value} characters)"
-                        }
-                        check JWT_SECRET "$JWT_SECRET"
-                        check SENDGRID_API_KEY "$SENDGRID_API_KEY"
-                        check SENDER_EMAIL "$SENDER_EMAIL"
-                        check FIREBASE_SERVICE_ACCOUNT_BASE64 "$FIREBASE_SERVICE_ACCOUNT_BASE64"
-                    '''
+            post {
+                success {
+                    archiveArtifacts artifacts: 'server/dist/**, frontend/dist/**',
+                                     fingerprint: true
                 }
             }
         }
@@ -77,7 +85,7 @@ pipeline {
 
     post {
         success {
-            echo "Pipeline completed successfully for build ${env.APP_VERSION}"
+            echo "Build ${env.APP_VERSION} completed successfully"
         }
         failure {
             echo 'Pipeline failed - see the stage log above'
