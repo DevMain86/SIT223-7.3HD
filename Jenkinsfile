@@ -1,6 +1,6 @@
 // DEV@Deakin CI/CD pipeline.
 //
-// Stages 1-4 of 7: Build, Test, Code Quality and Security.
+// Stages 1-5 of 7: Build, Test, Code Quality, Security and Deploy.
 
 pipeline {
     agent any
@@ -29,7 +29,12 @@ pipeline {
         MAX_RELIABILITY_RATING     = '4'    // measured D - bugs to be addressed in the Security stage
         MAX_SECURITY_RATING        = '3'    // measured C - vulnerabilities to be addressed in the Security stage
 
-        SECURITY_GATE_ENFORCED = 'false'
+        SECURITY_GATE_ENFORCED = 'true'
+
+        STAGING_PROJECT = 'devdeakin-staging'
+        STAGING_PORT    = '8001'
+
+        DOCKER_HOST_NAME = 'host.docker.internal'
     }
 
     stages {
@@ -88,6 +93,7 @@ pipeline {
             }
             post {
                 success {
+
                     archiveArtifacts artifacts: 'server/dist/**, frontend/dist/**',
                                      fingerprint: true
                 }
@@ -302,6 +308,62 @@ pipeline {
                 always {
                     archiveArtifacts artifacts: 'security-reports/**', allowEmptyArchive: true
                 }
+            }
+        }
+
+        stage('Deploy to Staging') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "=== Deploying build ${APP_VERSION} to staging on port ${STAGING_PORT}"
+                    # --no-build: run exactly the images the Build stage produced.
+                    # --wait: block until every container reports healthy, or fail.
+                    APP_VERSION="${APP_VERSION}" FRONTEND_PORT="${STAGING_PORT}" \
+                        docker compose -p "${STAGING_PROJECT}" up -d --no-build \
+                        --wait --wait-timeout 120
+
+                    echo
+                    docker compose -p "${STAGING_PROJECT}" ps
+
+                    BASE="http://${DOCKER_HOST_NAME}:${STAGING_PORT}"
+                    echo
+                    echo "=== Smoke tests against ${BASE}"
+
+                    echo "--- nginx is serving"
+                    curl -fsS "${BASE}/healthz"
+
+                    echo "--- the React app is being served"
+                    curl -fsS "${BASE}/" | grep -q 'id="root"'
+                    echo "index.html served"
+
+                    echo "--- the API answers through the proxy, and reports this build"
+                    HEALTH=$(curl -fsS "${BASE}/api/health")
+                    echo "${HEALTH}"
+                    DEPLOYED=$(printf '%s' "${HEALTH}" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>console.log(JSON.parse(d).version))')
+
+                    # The artefact check: the running container must be the build this
+                    # pipeline just produced, not a leftover from an earlier run
+                    if [ "${DEPLOYED}" != "${APP_VERSION}" ]; then
+                        echo "Version mismatch: staging reports ${DEPLOYED}, expected ${APP_VERSION}"
+                        exit 1
+                    fi
+                    echo "staging is running build ${DEPLOYED}"
+
+                    echo "--- the database is reachable"
+                    curl -fsS "${BASE}/api/posts" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const p=JSON.parse(d).posts;if(!Array.isArray(p))throw new Error("no posts array");console.log(p.length+" posts returned from Firestore")})'
+
+                    echo "--- metrics are not exposed publicly"
+                    CODE=$(curl -s -o /dev/null -w "%{http_code}" "${BASE}/api/metrics")
+                    if [ "${CODE}" != "404" ]; then
+                        echo "Expected 404 for /api/metrics, got ${CODE}"
+                        exit 1
+                    fi
+                    echo "/api/metrics returns 404 as intended"
+
+                    echo
+                    echo "Staging deployment verified: ${BASE}"
+                '''
             }
         }
     }
