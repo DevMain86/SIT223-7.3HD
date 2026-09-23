@@ -9,7 +9,7 @@ pipeline {
         timestamps()
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        timeout(time: 30, unit: 'MINUTES')   
+        timeout(time: 30, unit: 'MINUTES')
     }
 
     environment {
@@ -238,6 +238,8 @@ pipeline {
                     # Trivy's vulnerability database between builds.
                     TRIVY_IMAGE="docker run --rm \
                         -v /var/run/docker.sock:/var/run/docker.sock \
+                        --volumes-from $(hostname) \
+                        -w $WORKSPACE \
                         -v trivy-cache:/root/.cache \
                         aquasec/trivy:latest"
                     TRIVY_FS="docker run --rm \
@@ -261,11 +263,13 @@ pipeline {
                     echo "=== Container image vulnerabilities (Trivy)"
                     for image in devdeakin-server devdeakin-frontend; do
                         echo "--- ${image}:${APP_VERSION}"
+                        # --table-mode detailed suppresses the per-package summary table,
+                        # which lists every node_modules file and buries the findings
                         $TRIVY_IMAGE image --scanners vuln --severity HIGH,CRITICAL \
-                            --no-progress "${image}:${APP_VERSION}"
+                            --table-mode detailed --no-progress "${image}:${APP_VERSION}"
 
                         $TRIVY_IMAGE image --scanners vuln --format json --quiet \
-                            -o "/root/.cache/${image}-trivy.json" "${image}:${APP_VERSION}"
+                            -o "security-reports/${image}-trivy.json" "${image}:${APP_VERSION}"
 
                         # Gate only on vulnerabilities with a fix available: an unfixable
                         # CVE in a base image cannot be actioned by this build
@@ -276,7 +280,7 @@ pipeline {
 
                     echo
                     echo "=== Infrastructure misconfiguration (Dockerfiles and Compose)"
-                    $TRIVY_FS config --no-progress --severity HIGH,CRITICAL \
+                    $TRIVY_FS config --severity HIGH,CRITICAL \
                         --skip-dirs "**/node_modules" . || true
 
                     echo
@@ -293,6 +297,11 @@ pipeline {
                         echo "Security findings present (reporting only - see SECURITY_GATE_ENFORCED)"
                     fi
                 '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'security-reports/**', allowEmptyArchive: true
+                }
             }
         }
     }

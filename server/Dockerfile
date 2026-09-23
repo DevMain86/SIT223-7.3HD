@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
 
-
 # Build stage: install every dependency and compile TypeScript to dist/
 
 FROM node:24-alpine AS build
@@ -22,7 +21,13 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+
+RUN npm ci --omit=dev \
+ && npm cache clean --force \
+ && rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/lib/node_modules/corepack \
+           /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+           /opt/yarn-v*
 
 COPY --from=build /app/dist ./dist
 
