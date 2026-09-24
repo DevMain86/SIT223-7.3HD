@@ -1,6 +1,6 @@
 // DEV@Deakin CI/CD pipeline.
 //
-// Stages 1-6 of 7: Build, Test, Code Quality, Security, Deploy and Release.
+// All seven stages: Build, Test, Code Quality, Security, Deploy, Release and Monitoring.
 
 pipeline {
     agent any
@@ -9,7 +9,7 @@ pipeline {
         timestamps()
         disableConcurrentBuilds()
         buildDiscarder(logRotator(numToKeepStr: '20'))
-        timeout(time: 30, unit: 'MINUTES') 
+        timeout(time: 30, unit: 'MINUTES')
     }
 
     environment {
@@ -37,6 +37,10 @@ pipeline {
         PROD_PORT       = '8000'
 
         DOCKER_HOST_NAME = 'host.docker.internal'
+
+        MONITORING_COMPOSE = 'monitoring/docker-compose.monitoring.yml'
+        PROMETHEUS_PORT    = '9090'
+        GRAFANA_PORT       = '3001'
     }
 
     stages {
@@ -465,6 +469,81 @@ MANIFEST
                 success {
                     archiveArtifacts artifacts: 'release/**', fingerprint: true
                 }
+            }
+        }
+
+        stage('Monitoring') {
+            steps {
+                sh '''
+                    set -e
+
+                    echo "=== Ensuring the monitoring stack is running"
+                    # Started, not rebuilt: monitoring is long-lived infrastructure that
+                    # must keep observing (and alerting) across application redeploys
+                    docker compose -f "${MONITORING_COMPOSE}" up -d
+
+                    PROM="http://${DOCKER_HOST_NAME}:${PROMETHEUS_PORT}"
+
+                    echo
+                    echo "=== Waiting for Prometheus to be ready"
+                    attempt=1
+                    while [ "$attempt" -le 20 ]; do
+                        if curl -fsS "${PROM}/-/ready" >/dev/null 2>&1; then
+                            echo "Prometheus ready"
+                            break
+                        fi
+                        echo "  not ready yet (attempt ${attempt})"
+                        attempt=$((attempt + 1))
+                        sleep 5
+                    done
+                    curl -fsS "${PROM}/-/ready" >/dev/null
+
+                    echo
+                    echo "=== Alert rules loaded"
+                    curl -fsS "${PROM}/api/v1/rules" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const g=JSON.parse(d).data.groups;let n=0;for(const grp of g){for(const r of grp.rules){if(r.type==="alerting"){n++;console.log("  ["+grp.name+"] "+r.name+" ("+(r.labels.severity||"none")+")")}}}if(n===0){console.error("No alert rules loaded");process.exit(1)}console.log("  "+n+" alert rules active")})'
+
+                    echo
+                    echo "=== Waiting for the first scrape of the released build"
+                    # Prometheus scrapes every 15s; the stack may have only just started
+                    attempt=1
+                    SCRAPED=""
+                    while [ "$attempt" -le 12 ]; do
+                        SCRAPED=$(curl -fsS "${PROM}/api/v1/query?query=up%7Bjob%3D%22devdeakin-api%22%7D" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d).data.result;console.log(r.length&&r[0].value[1]==="1"?"up":"")})')
+                        if [ "$SCRAPED" = "up" ]; then
+                            echo "API target is up"
+                            break
+                        fi
+                        echo "  target not up yet (attempt ${attempt})"
+                        attempt=$((attempt + 1))
+                        sleep 10
+                    done
+
+                    if [ "$SCRAPED" != "up" ]; then
+                        echo "Prometheus cannot scrape the production API"
+                        exit 1
+                    fi
+
+                    echo
+                    echo "=== Confirming monitoring sees the build that was just released"
+                    # Closes the loop: the version in the metrics store must match the
+                    # version this pipeline built, tested, scanned and released
+                    OBSERVED=$(curl -fsS "${PROM}/api/v1/query?query=app_info" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const r=JSON.parse(d).data.result;console.log(r.length?r[0].metric.version:"")})')
+                    echo "  app_info reports version ${OBSERVED}"
+                    if [ "${OBSERVED}" != "${APP_VERSION}" ]; then
+                        echo "Monitoring reports ${OBSERVED}, expected ${APP_VERSION}"
+                        exit 1
+                    fi
+
+                    echo
+                    echo "=== Current alert status"
+                    curl -fsS "${PROM}/api/v1/alerts" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const a=JSON.parse(d).data.alerts;if(!a.length){console.log("  no alerts firing");return}for(const x of a)console.log("  "+x.state.toUpperCase()+"  "+x.labels.alertname)})'
+
+                    echo
+                    echo "Monitoring verified"
+                    echo "  Prometheus   http://localhost:${PROMETHEUS_PORT}"
+                    echo "  Alertmanager http://localhost:9093"
+                    echo "  Grafana      http://localhost:${GRAFANA_PORT}"
+                '''
             }
         }
     }
