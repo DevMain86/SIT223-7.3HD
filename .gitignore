@@ -4,4 +4,9 @@ dist/
 **/serviceAccountKey.json
 .scannerwork/
 coverage/
+
+test-results/
+SIT223-7.3HD/
+
+monitoring/alertmanager/smtp_password
 test-results/

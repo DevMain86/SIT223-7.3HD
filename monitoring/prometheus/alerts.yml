@@ -1,0 +1,80 @@
+# Alert rules for DEV@Deakin.
+
+groups:
+  - name: availability
+    rules:
+      - alert: APIDown
+        expr: up{job="devdeakin-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DEV@Deakin API is not responding"
+          description: >-
+            Prometheus has been unable to scrape {{ $labels.instance }} for over a
+            minute. The API container is likely stopped or unhealthy. Check
+            "docker compose -p devdeakin-prod ps" and the container logs.
+
+      - alert: FrontendUnreachable
+        expr: absent(up{job="devdeakin-api"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No metrics at all from the production stack"
+          description: >-
+            The devdeakin-api target has disappeared from Prometheus entirely,
+            which usually means the production stack was removed rather than
+            restarted.
+
+  - name: performance
+    rules:
+      - alert: HighErrorRate
+        expr: >-
+          sum(rate(http_requests_total{status_code=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m])) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 5% of requests are failing"
+          description: >-
+            {{ $value | humanizePercentage }} of requests returned a 5xx status
+            over the last five minutes.
+
+      - alert: SlowResponses
+        expr: >-
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "95th percentile response time above one second"
+          description: >-
+            The slowest 5% of requests are taking over {{ $value }}s. Firestore
+            latency or an unindexed query are the usual causes.
+
+  - name: resources
+    rules:
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes{job="devdeakin-api"} > 400e6
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API memory usage above 400MB"
+          description: >-
+            Resident memory has been over 400MB for five minutes, which may
+            indicate a leak.
+
+      - alert: EventLoopBlocked
+        expr: nodejs_eventloop_lag_seconds{job="devdeakin-api"} > 0.2
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Node.js event loop lagging"
+          description: >-
+            Event loop lag has exceeded 200ms for two minutes, so synchronous
+            work is blocking request handling.
