@@ -14,7 +14,6 @@ pipeline {
 
     environment {
         APP_VERSION = "${env.BUILD_NUMBER}"
-
         JWT_SECRET                      = credentials('JWT_SECRET')
         SENDGRID_API_KEY                = credentials('SENDGRID_API_KEY')
         SENDER_EMAIL                    = credentials('SENDER_EMAIL')
@@ -477,26 +476,32 @@ MANIFEST
                 sh '''
                     set -e
 
-                    echo "=== Ensuring the monitoring stack is running"
-                    # Started, not rebuilt: monitoring is long-lived infrastructure that
-                    # must keep observing (and alerting) across application redeploys
-                    docker compose -f "${MONITORING_COMPOSE}" up -d
-
                     PROM="http://${DOCKER_HOST_NAME}:${PROMETHEUS_PORT}"
 
-                    echo
-                    echo "=== Waiting for Prometheus to be ready"
+                    echo "=== Checking the monitoring stack is running"
+                    # The pipeline verifies monitoring; it does not start or restart it.
+                    # Monitoring is long-lived infrastructure that has to keep observing
+                    # and alerting across deployments - restarting Prometheus on every
+                    # release would blind the alerting exactly when a deployment is most
+                    # likely to break something. It is started once, out of band, with:
+                    #   docker compose -f monitoring/docker-compose.monitoring.yml up -d
                     attempt=1
-                    while [ "$attempt" -le 20 ]; do
+                    while [ "$attempt" -le 12 ]; do
                         if curl -fsS "${PROM}/-/ready" >/dev/null 2>&1; then
-                            echo "Prometheus ready"
+                            echo "Prometheus is ready"
                             break
                         fi
-                        echo "  not ready yet (attempt ${attempt})"
+                        echo "  waiting for Prometheus (attempt ${attempt})"
                         attempt=$((attempt + 1))
                         sleep 5
                     done
-                    curl -fsS "${PROM}/-/ready" >/dev/null
+
+                    if ! curl -fsS "${PROM}/-/ready" >/dev/null 2>&1; then
+                        echo "Prometheus is not reachable at ${PROM}"
+                        echo "Start the monitoring stack with:"
+                        echo "  docker compose -f ${MONITORING_COMPOSE} up -d"
+                        exit 1
+                    fi
 
                     echo
                     echo "=== Alert rules loaded"
